@@ -43,93 +43,26 @@
 #include <nuttx/config.h>
 #include <dnnrt/runtime.h>
 #include "loader_nnb.h"
-#include "pnm_util.h"
 
 /****************************************************************************
  * Type Definition
  ****************************************************************************/
-typedef struct
-  {
-    char *nnb_path;
-    char *pgm_path;
-    bool skip_norm;
-  } my_setting_t;
 
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
-#define DNN_PNM_PATH    "/mnt/sd0/0.pgm"
-#define DNN_NNB_PATH    "/mnt/sd0/lenet-5.nnb"
-#define MNIST_SIZE_PX (28*28)
+#define DNN_NNB_PATH    "/mnt/sd0/face-tracking.nnb"
+#define IMAGE_WIDTH_PX  (32)
+#define IMAGE_HEIGHT_PX (32)
 
 /****************************************************************************
  * Private Data
  ****************************************************************************/
-static float s_img_buffer[MNIST_SIZE_PX];
+static float s_img_buffer[IMAGE_WIDTH_PX * IMAGE_HEIGHT_PX];
 
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
-static void convert_datatype(dnn_runtime_t * rt)
-{
-  /* get datatype which this dnn_runtime_t expects */
-  nn_variable_t *var = dnn_runtime_input_variable(rt, 0);
-  float coefficient = (float)(1 << var->fp_pos);
-
-  if (var->type == NN_DATA_TYPE_FLOAT)
-    {
-      /* do nothing since the image data is stored as float */
-    }
-  else if (var->type == NN_DATA_TYPE_INT16)
-    {
-      /* convert the image data in-place to 16-bit fixed-point values */
-      int16_t *int16_buffer = (int16_t *) s_img_buffer;
-      for (uint16_t px = 0u; px < MNIST_SIZE_PX; px++)
-        {
-          int16_buffer[px] = (int16_t) (coefficient * s_img_buffer[px]);
-        }
-    }
-  else
-    {
-      /* convert the image data in-place to 8-bit fixed-point values */
-      int8_t *int8_buffer = (int8_t *) s_img_buffer;
-      for (uint16_t px = 0u; px < MNIST_SIZE_PX; px++)
-        {
-          int8_buffer[px] = (int8_t) (coefficient * s_img_buffer[px]);
-        }
-    }
-}
-
-static void parse_args(int argc, char *argv[], my_setting_t * setting)
-{
-  /* parse options by getopt() */
-  int opt;
-  while ((opt = getopt(argc, argv, "s")) != -1)
-    {
-      switch (opt)
-        {
-          case 's': /* skip normalization */
-            setting->skip_norm = true;
-            break;
-        }
-    }
-
-  /* set my_setting_t::{nnb_path,pgm_path} to argv[] if necessary */
-  setting->nnb_path = (optind < argc) ? argv[optind++] : DNN_NNB_PATH;
-  setting->pgm_path = (optind < argc) ? argv[optind]   : DNN_PNM_PATH;
-
-  /* print my_setting_t */
-  printf("Load nnb file: %s\n",  setting->nnb_path);
-  printf("Load pgm image: %s\n", setting->pgm_path);
-  if (setting->skip_norm)
-    {
-      printf("Image Normalization (1.0/255.0): skipped\n");
-    }
-  else
-    {
-      printf("Image Normalization (1.0/255.0): enabled\n");
-    }
-}
 
 /****************************************************************************
  * dnnrt_face_tracking_main
@@ -140,30 +73,16 @@ int main(int argc, FAR char *argv[])
 int dnnrt_face_tracking_main(int argc, char *argv[])
 #endif
 {
-  int ret;
-  unsigned char i;
-  float *output_buffer, proc_time, norm_factor;
+  int ret, i, j;
+  float *output_buffer, proc_time;
   const void *inputs[1] = { s_img_buffer };
   dnn_runtime_t rt;
   nn_network_t *network;
-  my_setting_t setting = { 0 };
   struct timeval begin, end;
-
-  parse_args(argc, argv, &setting);
-
-  /* load an hand-written digit image into s_img_buffer,
-     and then divide the pixels by 255.0 for normalization */
-  norm_factor = setting.skip_norm ? 1.0f : 255.0f;
-  ret = pnm_load(setting.pgm_path, norm_factor, s_img_buffer, sizeof(s_img_buffer));
-  if (ret)
-    {
-      printf("load pgm image failed due to %d\n", ret);
-      goto pgm_error;
-    }
 
   /* load an nnb file, which holds a network structure and weight values,
      into a heap memory */
-  network = alloc_nnb_network(setting.nnb_path);
+  network = alloc_nnb_network(DNN_NNB_PATH);
   if (network == NULL)
     {
       printf("load nnb file failed\n");
@@ -187,8 +106,13 @@ int dnnrt_face_tracking_main(int argc, char *argv[])
       goto rt_error;
     }
 
-  /* convert the image data to datatype this dnn_runtime_t expects */
-  convert_datatype(&rt);
+  for (i = 0; i < IMAGE_HEIGHT_PX; i++)
+    {
+      for (j = 0; j < IMAGE_WIDTH_PX; j++)
+        {
+          s_img_buffer[i * IMAGE_WIDTH_PX + j] = 0.5;
+        }
+    }
 
   /* Step-C: perform inference after feeding inputs */
   printf("start dnn_runtime_forward()\n");
@@ -205,7 +129,7 @@ int dnnrt_face_tracking_main(int argc, char *argv[])
   output_buffer = dnn_runtime_output_buffer(&rt, 0u);
 
   /* show the classification result and its processing time */
-  for (i = 0u; i < 10u; i++)
+  for (i = 0; i < 2; i++)
     {
       printf("output[%u]=%.6f\n", i, output_buffer[i]);
     }
