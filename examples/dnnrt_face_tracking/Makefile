@@ -50,7 +50,7 @@ STACKSIZE = $(CONFIG_EXAMPLES_DNNRT_FACE_TRACKING_STACKSIZE)
 
 ASRCS =
 CSRCS =
-MAINSRC = dnnrt_face_tracking_main.c loader_nnb.c pnm_util.c
+MAINSRC = dnnrt_face_tracking_main.c loader_nnb.c dnnrt_face_tracking_bkgd.c
 
 CONFIG_EXAMPLES_DNNRT_FACE_TRACKING_PROGNAME ?= dnnrt_face_tracking$(EXEEXT)
 PROGNAME = $(CONFIG_EXAMPLES_DNNRT_FACE_TRACKING_PROGNAME)
