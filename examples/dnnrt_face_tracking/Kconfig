@@ -1,0 +1,31 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config EXAMPLES_DNNRT_FACE_TRACKING
+	bool "dnnrt example of face tracking"
+    depends on DNN_RT
+	default n
+	---help---
+		Face tracking using Spresense camera.
+
+if EXAMPLES_DNNRT_FACE_TRACKING
+
+config EXAMPLES_DNNRT_FACE_TRACKING_PROGNAME
+	string "Program name"
+	default "dnnrt_face_tracking"
+	depends on BUILD_KERNEL
+	---help---
+		This is the name of the program that will be use when the NSH ELF
+		program is installed.
+
+config EXAMPLES_DNNRT_FACE_TRACKING_PRIORITY
+	int "dnnrt_face_tracking task priority"
+	default 100
+
+config EXAMPLES_DNNRT_FACE_TRACKING_STACKSIZE
+	int "dnnrt_face_tracking stack size"
+	default 2048
+
+endif
