@@ -71,11 +71,11 @@ typedef struct v_buffer v_buffer_t;
  * Pre-processor Definitions
  ****************************************************************************/
 #define DNN_NNB_PATH    "/mnt/sd0/face-tracking.nnb"
-#define IMAGE_WIDTH_PX  (32)
-#define IMAGE_HEIGHT_PX (32)
+#define IMAGE_WIDTH_PX  (64)
+#define IMAGE_HEIGHT_PX (64)
 
 #define IMAGE_YUV_SIZE  (320*240*2) /* QVGA YUV422 */
-#define VIDEO_BUFNUM    (3)
+#define VIDEO_BUFNUM    (1)
 
 #ifndef CONFIG_EXAMPLES_CAMERA_LCD_DEVNO
 #  define CONFIG_EXAMPLES_CAMERA_LCD_DEVNO 0
@@ -85,6 +85,7 @@ typedef struct v_buffer v_buffer_t;
  * Private Data
  ****************************************************************************/
 static float s_img_buffer[IMAGE_WIDTH_PX * IMAGE_HEIGHT_PX];
+static uint8_t gray_buf[VIDEO_HSIZE_QVGA * VIDEO_VSIZE_QVGA];
 
 static struct v_buffer  *buffers_video;
 static unsigned int     n_buffers;
@@ -296,6 +297,32 @@ static void free_buffer(struct v_buffer  *buffers, uint8_t bufnum)
     }
 }
 
+static void fillrectangle(void *image, uint32_t x1, uint32_t y1,
+				                  uint32_t x2, uint32_t y2, uint16_t color)
+{
+  unsigned int row, col;
+  uint16_t *buf;
+
+  for (row = y1; row <= y2; row++) 
+    {
+      buf = (uint16_t *)image + row * g_nximage.xres + x1;	  
+          
+      for (col = x1; col <= x2; col++) 
+        {
+          *buf++ = color;
+        }
+    }
+}
+
+static void drawframe(void *image, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2,
+			               uint32_t width, uint16_t color)
+{
+  fillrectangle(image, x1 - width, y1 - width, x2 + width, y1, color);
+  fillrectangle(image, x1 - width, y1, x1, y2, color);
+  fillrectangle(image, x2, y1, x2 + width, y2, color);
+  fillrectangle(image, x1 - width, y2, x2 + width, y2 + width, color);
+}
+
 /****************************************************************************
  * dnnrt_face_tracking_main
  ****************************************************************************/
@@ -305,7 +332,7 @@ int main(int argc, FAR char *argv[])
 int dnnrt_face_tracking_main(int argc, char *argv[])
 #endif
 {
-  int ret, v_fd, i, j;
+  int ret, v_fd, x_start, y_start, i, j;
   float *output_buffer, proc_time;
   const void *inputs[1] = { s_img_buffer };
   dnn_runtime_t rt;
@@ -375,39 +402,13 @@ int dnnrt_face_tracking_main(int argc, char *argv[])
       goto rt_error;
     }
 
-  for (i = 0; i < IMAGE_HEIGHT_PX; i++)
-    {
-      for (j = 0; j < IMAGE_WIDTH_PX; j++)
-        {
-          s_img_buffer[i * IMAGE_WIDTH_PX + j] = 0.5;
-        }
-    }
-
-  /* Step-C: perform inference after feeding inputs */
-  printf("start dnn_runtime_forward()\n");
-  gettimeofday(&begin, 0);
-  ret = dnn_runtime_forward(&rt, inputs, 1);
-  gettimeofday(&end, 0);
-  if (ret)
-    {
-      printf("dnn_runtime_forward() failed due to %d\n", ret);
-      goto fin;
-    }
-
-  /* Step-D: obtain the output from this dnn_runtime_t */
-  output_buffer = dnn_runtime_output_buffer(&rt, 0u);
-
-  /* show the classification result and its processing time */
-  for (i = 0; i < 2; i++)
-    {
-      printf("output[%u]=%.6f\n", i, output_buffer[i]);
-    }
-  proc_time = (float)end.tv_sec + (float)end.tv_usec / 1.0e6;
-  proc_time -= (float)begin.tv_sec + (float)begin.tv_usec / 1.0e6;
-  printf("inference time=%.3f\n", proc_time);
+  x_start = g_nximage.xres / 2 - IMAGE_HEIGHT_PX / 2;
+  y_start = g_nximage.yres / 2 - IMAGE_WIDTH_PX / 2;
 
   for (;;)
     {
+      int maxByte = 0, minByte = 255;
+
       memset(&buf, 0, sizeof(v4l2_buffer_t));
       buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
       buf.memory = V4L2_MEMORY_USERPTR;
@@ -421,8 +422,75 @@ int dnnrt_face_tracking_main(int argc, char *argv[])
 
       /* Convert YUV color format to RGB565 */
       imageproc_convert_yuv2rgb((void *)buf.m.userptr,
-                       VIDEO_HSIZE_QVGA,
-                       VIDEO_VSIZE_QVGA);
+                                VIDEO_HSIZE_QVGA,
+                                VIDEO_VSIZE_QVGA);
+
+      /* get 8bits image buffer for NNabla */
+	    imageproc_convert_yuv2gray((void *)buf.m.userptr, 
+		                             (void*)gray_buf, 
+		                             VIDEO_HSIZE_QVGA, 
+		                             VIDEO_VSIZE_QVGA);
+
+      for (i = 0; i < IMAGE_HEIGHT_PX; i++)
+        {
+          for (j = 0; j < IMAGE_WIDTH_PX; j++)
+          {
+            if (gray_buf[(i + y_start) * g_nximage.xres + (j + x_start)] > maxByte)
+            {
+              maxByte = gray_buf[(i + y_start) * g_nximage.xres + (j + x_start)];
+            }
+
+            if (gray_buf[(i + y_start) * g_nximage.xres + (j + x_start)] < minByte)
+            {
+              minByte = gray_buf[(i + y_start) * g_nximage.xres + (j + x_start)];
+            }
+          }
+        }
+
+      for (i = 0; i < IMAGE_HEIGHT_PX; i++)
+        {
+          for (j = 0; j < IMAGE_WIDTH_PX; j++)
+            {
+              s_img_buffer[i * IMAGE_WIDTH_PX + j] = ((float)gray_buf[(i + y_start) * g_nximage.xres + (j + x_start)] - minByte) / (maxByte - minByte);
+            }
+        }
+
+      /* Step-C: perform inference after feeding inputs */
+      printf("start dnn_runtime_forward()\n");
+      gettimeofday(&begin, 0);
+      ret = dnn_runtime_forward(&rt, inputs, 1);
+      gettimeofday(&end, 0);
+      if (ret)
+        {
+          printf("dnn_runtime_forward() failed due to %d\n", ret);
+          goto fin;
+        }
+
+      /* Step-D: obtain the output from this dnn_runtime_t */
+      output_buffer = dnn_runtime_output_buffer(&rt, 0u);
+
+      /* show the classification result and its processing time */
+      for (i = 0; i < 2; i++)
+        {
+          printf("output[%u]=%.6f\n", i, output_buffer[i]);
+        }
+
+      proc_time = (float)end.tv_sec + (float)end.tv_usec / 1.0e6;
+      proc_time -= (float)begin.tv_sec + (float)begin.tv_usec / 1.0e6;
+      printf("inference time=%.3f\n", proc_time);
+
+      if (output_buffer[0] > 0.8)
+        {
+          drawframe((void *)buf.m.userptr, g_nximage.xres / 2 - IMAGE_WIDTH_PX / 2, g_nximage.yres / 2 - IMAGE_HEIGHT_PX / 2,
+                                           g_nximage.xres / 2 + IMAGE_WIDTH_PX / 2, g_nximage.yres / 2 + IMAGE_HEIGHT_PX / 2,
+                                           5, 0x07e0);
+        }
+      else
+        {
+          drawframe((void *)buf.m.userptr, g_nximage.xres / 2 - IMAGE_WIDTH_PX / 2, g_nximage.yres / 2 - IMAGE_HEIGHT_PX / 2,
+                                           g_nximage.xres / 2 + IMAGE_WIDTH_PX / 2, g_nximage.yres / 2 + IMAGE_HEIGHT_PX / 2,
+                                           5, 0xf800);
+        }
       
       nximage_image(g_nximage.hbkgd, (void *)buf.m.userptr);
 
